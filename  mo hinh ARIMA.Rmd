@@ -1,0 +1,130 @@
+---
+title: "Dự báo cổ phiếu FPT bằng mô hình ARIMA"
+author: "Đoàn Thị Thanh Thư"
+date: "4/21/2022"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#các thư viện sẽ dùng
+library(ggplot2)
+library(urca)
+library(forecast)
+library(quantmod)
+```
+
+```{r}
+#lấy dữ liệu
+getSymbols('FPT', from = '2020-01-01', to ='2022-1-1')
+head(FPT)
+```
+
+```{r}
+#mức giá đóng cửa(cột thứ 4)
+stock_prices <- FPT[,4]
+tail(stock_prices)
+```
+
+
+```{r}
+#lấy sai phân của logarit => tạo chuỗi mới có tính dừng
+stock = diff(log(stock_prices), lag = 1)
+stock = stock[!is.na(stock)]
+plot(stock,main = "log return plot")
+```
+
+```{r}
+# kiểm định tính dừng sau khi lấy sai phân
+summary(ur.df(stock, type ="drift", lag= 0, ))
+```
+tau statistic = -26.89 có trị tuyệt đối lớn hơn trị tuyệt đối tau 2  = -2.87 với mức ý nghĩa 5%
+=> bác bỏ H0 => chuỗi dừng (H0: chuỗi không dừng, có nghiệm đơn vị ; H1: chuỗi không có nghiệm đơn vị, dừng)
+```{r}
+#chia tập dataset thành train và test, 9/10 tổng quan sát trong khoảng thời đầu
+breakpoint = floor(nrow(stock)*(9/10)) 
+train = stock[1:breakpoint,]
+test = stock[-row(train),]
+```
+#Tính các chỉ số ACF và PACF để xác định AR, MA
+```{r}
+acf.train = acf(train,main = 'ACF Plot', lag.max = 100)
+```
+
+```{r}
+pacf.train = pacf(train,main = "PACF plot", lag.max = 100)
+```
+=> AR(1), MA(1)
+```{r}
+##Khởi tạo một xts object cho giá trị thực tế của log return
+nrow(train)
+a = 449
+stock[a,]
+```
+
+```{r}
+#Lay gia tri date truoc ngay co stt a
+Actual_series = xts(0,as.Date("2021-10-19","%Y-%m-%d"))
+Actual_series
+```
+
+```{r}
+# Tạo 1 dataframe cho chuỗi dự báo
+forecasted_series = data.frame(STT = integer(),Forecasted = numeric(),Upper_Forecasted = numeric(),Lower_Forecasted = numeric())
+#tạo ra một vòng lặp for trong R để với mỗi một chu kì lặp sẽ tính ra giá trị dự báo trong test dataset.
+for(b in a:nrow(stock)-1){
+  stock_train = stock[1:b,]
+  stock_test = stock[-row(stock_train),]
+fit = arima(stock_train,order = c(1,0,1),include.mean = FALSE)
+summary(fit)
+#Forecast log returns
+library(forecast)
+arima.forecast = forecast(fit,h=1,level = 95)
+summary(arima.forecast)
+forecasted_series = rbind(forecasted_series,c(STT = b+1,Forecasted = arima.forecast$mean[1],arima.forecast$upper,arima.forecast$lower))
+Actual_return = stock[(b+1),]
+Actual_series = c(Actual_series,xts(Actual_return))
+rm(Actual_return)
+}
+
+```
+
+```{r}
+colnames(forecasted_series)=c("STT","Forecasted","Upper_Forecasted","Lower_Forecasted")
+tail(forecasted_series)
+```
+
+```{r}
+#Kiểm tra độ chính xác của mô hình ARIMA
+Actual_series = Actual_series[-1]
+#Tạo ra object cho chuỗi được dự báo
+forecasted_series = xts(forecasted_series,index(Actual_series))
+
+#So sánh giá trị dự báo và giá trị thực tế
+plot(Actual_series,ylim=c(-0.2,0.2),main="Actual return vs Forecasted return")
+lines(forecasted_series$Forecasted,lwd=1.5,col = "blue")
+lines(forecasted_series$Upper_Forecasted,type = "l",pch = 22,lyt =1,lwd=0.5,col = "red")
+lines(forecasted_series$Lower_Forecasted,type = "l",pch = 22,lyt =1,lwd=0.5,col = "red")
+legend('bottomright',c('Actual','Forecasted',"Upper forecasted","Lower forecasted"),lty = c(1,1), lwd = c(1.5,1.5),col = c('black','blue','red','red'))
+
+```
+
+```{r}
+comparision = merge(Actual_series,forecasted_series$Forecasted)
+comparision$Accuracy = sign(comparision$Actual_series) == sign(comparision$Forecasted)
+print(comparision)
+```
+
+```{r}
+#tính toán mức độ chính xác
+Accuracy_percentage = sum(comparision$Accuracy ==1)*100/length(comparision$Accuracy)
+print(Accuracy_percentage)
+```
+Như vậy model ARIMA dự báo được chính xác 54.9% số trường hợp tăng của giá chứng khoán. 
+
+
